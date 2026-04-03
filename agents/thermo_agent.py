@@ -47,14 +47,20 @@ def create_thermo_agent():
     system_prompt = """You are a thermodynamic properties materials science expert.
 You have access to the Materials Project database via the query_mp_thermo tool.
 
+CRITICAL RULES:
+- ONLY query for materials explicitly mentioned in the user's question
+- DO NOT invent or assume mp-codes
+- Pass the material name/formula exactly as given by the user to the tool
+- Let the tool handle the lookup and return whatever it finds
+
 When asked about thermodynamic properties:
-1. THINK about what data you need
-2. ACTION: Call query_mp_thermo with the query  
-3. OBSERVATION: Read the tool result
-4. FINAL ANSWER: Synthesize into a clear, natural answer
+1. THINK about what material the user asked for
+2. ACTION: Call query_mp_thermo with the exact material name from the user's query
+3. OBSERVATION: Read the tool result (may be "no data found" - that's OK)
+4. FINAL ANSWER: Report only what was found in the tool result
 
 Always cite material IDs (mp-XXXXX) and units (eV/atom for energy).
-If the tool returns an error, analyze it and retry with corrected parameters."""
+If the tool returns "no data found", report that honestly."""
 
     # Agent class with tool-using loop
     class ThermoAgent:
@@ -125,7 +131,14 @@ If the tool returns an error, analyze it and retry with corrected parameters."""
                         if self.verbose:
                             print(f"\nThought: I have the data I need. Preparing final answer...")
                         
-                        final_prompt = messages + "\n\nBased on the data above, provide a clear final answer to the user's original question."
+                        final_prompt = messages + """\n\nBased ONLY on the tool observation data above, provide a final answer. 
+
+CRITICAL RULES:
+- ONLY use material IDs (mp-codes) and values that appear in the tool observation
+- If a requested material is NOT in the tool observation, state "Material X not found in database"
+- DO NOT synthesize, estimate, or use your training knowledge for missing materials  
+- DO NOT invent mp-codes or property values
+- If multiple materials were requested but only some found, list only the found ones and state which are missing"""
                         final_answer = self.llm.invoke(final_prompt)
                         
                         if self.verbose:
