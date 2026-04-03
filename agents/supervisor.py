@@ -1,7 +1,10 @@
-"""Supervisor agent for LatticeReAct - coordinates sub-agents for materials analysis."""
+"""Supervisor agent for LatticeReAct - hierarchical multi-agent coordinator with real LLM reasoning."""
 import sys
 sys.path.insert(0, '/home/letushack/Documents/TempFileRith/LatticeReAct')
+
 import re
+from langchain_ollama import OllamaLLM
+from langchain_core.tools import tool
 
 from agents.thermo_agent import create_thermo_agent
 from agents.elastic_agent import create_elastic_agent
@@ -10,243 +13,227 @@ from agents.electronic_agent import create_electronic_agent
 
 def create_supervisor():
     """
-    Create a hierarchical ReAct supervisor agent that coordinates sub-agents.
+    Create a hierarchical supervisor agent powered by Qwen2.5 LLM.
     
-    The supervisor orchestrates three sub-agents:
-    - Thermo agent: Formation energy, decomposition enthalpy, energy above hull
-    - Elastic agent: Bulk modulus, shear modulus, stiffness, Young's modulus
-    - Electronic agent: Bandgap, electronic structure, Fermi level
+    Architecture:
+    - Supervisor LLM reads query and THINKS about which sub-agents are needed
+    - Supervisor LLM CALLS appropriate sub-agents as tools
+    - Sub-agents retrieve verified Materials Project data
+    - Supervisor LLM SYNTHESIZES coherent final answer from sub-agent outputs
     
-    CRITICAL: This supervisor uses ZERO LLM reasoning for routing.
-    It uses only simple pattern matching to avoid hallucination.
+    This is real LLM reasoning at every level, not pattern matching.
     
     Returns:
-        SupervisorAgent: Configured supervisor agent
+        supervisor wrapper with invoke method
     """
     
-    # Initialize sub-agents
+    # Initialize real LLM - Qwen2.5 via Ollama
+    llm = OllamaLLM(
+        model="qwen2.5:14b-instruct-q8_0",
+        base_url="http://localhost:11434",
+        temperature=0,
+    )
+    
+    # Create sub-agent instances (these are real LLM-powered agents)
     thermo_agent = create_thermo_agent()
     elastic_agent = create_elastic_agent()
     electronic_agent = create_electronic_agent()
     
-    # Create tool definitions as dictionaries
-    tools = {
-        "thermo_agent": {
-            "name": "thermo_agent",
-            "func": lambda query: thermo_agent.invoke({"input": query}),
-            "keywords": ["formation energy", "energy above hull", "decomposition", "enthalpy", "thermo", "stability", "stable", "lowest energy"],
-            "description": "Formation energy, decomposition enthalpy, energy above hull"
-        },
-        "elastic_agent": {
-            "name": "elastic_agent",
-            "func": lambda query: elastic_agent.invoke({"input": query}),
-            "keywords": ["bulk modulus", "shear modulus", "young modulus", "elastic", "stiffness", "stiff", "modulus", "rigidity", "hardness"],
-            "description": "Bulk modulus, shear modulus, stiffness, Young's modulus"
-        },
-        "electronic_agent": {
-            "name": "electronic_agent",
-            "func": lambda query: electronic_agent.invoke({"input": query}),
-            "keywords": ["bandgap", "band gap", "electronic structure", "fermi", "cbm", "vbm", "gap", "conductor", "semiconductor"],
-            "description": "Bandgap, electronic structure, Fermi level"
-        },
-    }
+    # Define sub-agent tools
+    @tool
+    def call_thermo_agent(query: str) -> str:
+        """Query thermodynamic properties from Materials Project.
+        
+        Useful for: formation energy, energy above hull, thermodynamic stability,
+        decomposition enthalpy, thermodynamic analysis.
+        """
+        try:
+            result = thermo_agent.invoke({"input": query})
+            return result.get("output", str(result))
+        except Exception as e:
+            return f"Error: {str(e)}"
     
+    @tool
+    def call_elastic_agent(query: str) -> str:
+        """Query elastic/mechanical properties from Materials Project.
+        
+        Useful for: bulk modulus, shear modulus, Young's modulus, elastic constants,
+        stiffness, mechanical properties, rigidity.
+        """
+        try:
+            result = elastic_agent.invoke({"input": query})
+            return result.get("output", str(result))
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    @tool
+    def call_electronic_agent(query: str) -> str:
+        """Query electronic structure properties from Materials Project.
+        
+        Useful for: bandgap, electronic structure, band structure, Fermi level,
+        CBM (conduction band minimum), VBM (valence band maximum), metallic vs
+        semiconductor properties.
+        """
+        try:
+            result = electronic_agent.invoke({"input": query})
+            return result.get("output", str(result))
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    # System prompt for the supervisor
+    system_prompt = """You are LLaMP, a hierarchical materials science assistant powered by real LLM reasoning.
+
+YOUR CORE PRINCIPLES:
+1. You NEVER answer from memory or training data alone
+2. You ALWAYS use your tools to retrieve verified Materials Project data
+3. You THINK carefully about which tools are needed for each query
+4. You SYNTHESIZE tool results into clean, coherent answers
+5. You cite material IDs (mp-XXXXX) when providing specific results
+6. You handle multi-property queries by calling multiple tools
+7. You select minimum or maximum values when requested
+8. You understand materials composition (e.g., Na-C means NaC compounds)
+
+YOUR REASONING PROCESS:
+1. Read the user query carefully
+2. THINK about which properties are being asked for
+3. Decide which tools (sub-agents) have that data
+4. CALL the relevant tools
+5. Analyze the returned data
+6. SYNTHESIZE into a clear final answer
+
+TOOLS AVAILABLE:
+- call_thermo_agent: For thermodynamic properties (formation energy, stability)
+- call_elastic_agent: For mechanical properties (moduli, constants, stiffness)
+- call_electronic_agent: For electronic properties (bandgap, band structure, Fermi level)
+
+IMPORTANT:
+- If a query mentions multiple properties, call multiple tools
+- Always verify data comes from Materials Project
+- Be precise about units (GPa for modulus, eV for energy/bandgap)"""
+
+    # Agent class with tool-using loop
     class SupervisorAgent:
-        """
-        Hierarchical supervisor agent that routes queries to sub-agents using ZERO THINKING.
-        
-        CRITICAL ARCHITECTURE:
-        ✓ Pattern matching (NO LLM) for tool selection
-        ✓ Direct API result formatting (NO LLM synthesis)
-        ✓ Result: ZERO hallucination - pure Materials Project data only
-        
-        The supervisor NEVER uses LLM to:
-        - Decide which tools to call (pattern matching only)
-        - Interpret or reformat tool results (direct output only)
-        
-        This eliminates hallucination at the root cause.
-        """
-        
-        def __init__(self, tools):
-            self.tools = tools
+        def __init__(self, llm, tools_dict, sys_prompt):
+            self.llm = llm
+            self.tools_dict = tools_dict
+            self.sys_prompt = sys_prompt
             self.verbose = True
-            self.handle_parsing_errors = True
-            self.max_iterations = 8
-            self.return_intermediate_steps = False
-            self.early_stopping_method = "generate"
-            self.max_execution_time = 120
-            self.execution_timeout = 120
-        
-        def _select_tools(self, query):
-            """
-            Select tools using PURE PATTERN MATCHING - NO LLM REASONING.
-            
-            This method identifies which property type is being requested and 
-            selects only the relevant tools needed for that query.
-            
-            Strategy:
-            1. Check keyword matches in query for each tool
-            2. Return ONLY matched tools (do not use all if unclear)
-            3. If multiple independent properties requested, use multiple tools
-            """
-            query_lower = query.lower()
-
-            # Robust property detection for singular/plural phrasing.
-            thermo_patterns = [
-                r"formation\s+energ(?:y|ies)",
-                r"energy\s+above\s+hull",
-                r"decomposition",
-                r"thermo(?:dynamic)?",
-                r"stabil(?:ity|e)",
-            ]
-            elastic_patterns = [
-                r"bulk\s+modulus",
-                r"shear\s+modulus",
-                r"young'?s?\s+modulus",
-                r"elastic",
-                r"stiff(?:ness)?",
-                r"modulus",
-                r"rigidity",
-                r"hardness",
-            ]
-            electronic_patterns = [
-                r"band\s*gap",
-                r"electronic\s+structure",
-                r"fermi",
-                r"\bcbm\b",
-                r"\bvbm\b",
-                r"semiconductor",
-                r"conductor",
-            ]
-
-            thermo_hit = any(re.search(p, query_lower) for p in thermo_patterns)
-            elastic_hit = any(re.search(p, query_lower) for p in elastic_patterns)
-            electronic_hit = any(re.search(p, query_lower) for p in electronic_patterns)
-
-            matched_tools = []
-            if thermo_hit:
-                matched_tools.append("thermo_agent")
-            if elastic_hit:
-                matched_tools.append("elastic_agent")
-            if electronic_hit:
-                matched_tools.append("electronic_agent")
-
-            # Conservative fallback for ambiguous phrasing.
-            if not matched_tools:
-                matched_tools = list(self.tools.keys())
-
-            return matched_tools
-        
-        def _format_results(self, results):
-            """
-            Format tool results into clean output - NO LLM INTERPRETATION.
-            
-            Simply concatenate tool outputs directly without any LLM processing.
-            This ensures zero hallucination - what you see is pure API data.
-            """
-            if not results:
-                return "No data found for your query."
-            
-            # Directly concatenate tool results
-            output_lines = []
-            for tool_name, result in results.items():
-                output_lines.append(str(result))
-            
-            return '\n'.join(output_lines).strip()
         
         def invoke(self, inputs):
-            """
-            Execute supervisor agent with tool selection and direct formatting.
-            
-            Flow:
-            1. Select tools using pattern matching (ONLY relevant tools)
-            2. Execute selected tools
-            3. Format results directly (NO LLM interpretation)
-            4. Return raw tool output cleaned of tags
-            """
+            """Execute the supervisor with thought-action-observation loop."""
             query = inputs.get("input", "")
-            
-            if self.verbose:
-                print(f"\n[Supervisor] Query: {query}")
-            
-            # STEP 1: Select tools using PATTERN MATCHING (no LLM reasoning)
-            tool_names = self._select_tools(query)
-            
-            if self.verbose:
-                print(f"[Supervisor] Tools selected via pattern matching: {tool_names}")
-                
-                # Explicit reasoning statement (for debugging)
-                query_lower = query.lower()
-                if any(kw in query_lower for kw in self.tools["thermo_agent"]["keywords"]):
-                    print(f"  → Thermodynamic property detected")
-                if any(kw in query_lower for kw in self.tools["elastic_agent"]["keywords"]):
-                    print(f"  → Elastic property detected")
-                if any(kw in query_lower for kw in self.tools["electronic_agent"]["keywords"]):
-                    print(f"  → Electronic property detected")
-            
-            # STEP 2: Execute selected tools
-            results = {}
+            max_iterations = 5
             iteration = 0
             
-            for tool_name in tool_names:
-                if iteration >= self.max_iterations:
-                    break
+            # Initialize conversation
+            messages = f"{self.sys_prompt}\n\nUser query: {query}"
+            
+            while iteration < max_iterations:
+                iteration += 1
                 
-                tool = self.tools[tool_name]
                 if self.verbose:
-                    print(f"[Supervisor] Executing {tool_name}...")
+                    print(f"\n--- Supervisor Iteration {iteration} ---")
+                    print(f"Thought: Analyzing query to determine which tools to use...")
                 
-                try:
-                    result = tool["func"](query)
-                    if isinstance(result, dict):
-                        results[tool_name] = result.get("output", str(result))
-                    else:
-                        results[tool_name] = result
+                # Call LLM to get next action
+                tool_names = ", ".join(self.tools_dict.keys())
+                llm_input = messages + f"\n\nAvailable tools: {tool_names}\n\nRespond with your next action. Use format: ACTION: <tool_name>\nQUERY: <your query here>"
+                response = self.llm.invoke(llm_input)
+                
+                if self.verbose:
+                    print(f"\nLLM Response:\n{response[:500]}")
+                
+                # Check if LLM wants to use a tool
+                tool_used = False
+                for tool_name in self.tools_dict.keys():
+                    if tool_name in response.lower() or "action:" in response.lower():
+                        tool_used = True
+                        
+                        if self.verbose:
+                            print(f"\nAction: Calling {tool_name}")
+                        
+                        # Extract query from response
+                        query_pattern = r"(?:query:|ACTION INPUT:|QUERY:)\s*(.+?)(?:\n|$)"
+                        match = re.search(query_pattern, response, re.IGNORECASE | re.MULTILINE)
+                        
+                        if match:
+                            tool_query = match.group(1).strip().strip('"').strip("'")
+                        else:
+                            tool_query = query
+                        
+                        if self.verbose:
+                            print(f"Query: {tool_query}")
+                        
+                        # Call tool function
+                        tool_func = self.tools_dict[tool_name]
+                        observation = tool_func(tool_query)
+                        
+                        if self.verbose:
+                            obs_preview = observation[:300] + "..." if len(observation) > 300 else observation
+                            print(f"\nObservation:\n{obs_preview}")
+                        
+                        # Add to messages for next iteration
+                        messages += f"\n\nAction: {tool_name}\nQuery: {tool_query}\nResult: {observation}"
+                        break
+                
+                if not tool_used:
+                    # LLM provided direct answer without specifying a tool
+                    if self.verbose:
+                        print(f"\nFinal Answer:\n{response}")
+                    return {"output": response}
+                
+                # Check if this was sufficient or if we need more data
+                if "final answer" in response.lower() or iteration >= max_iterations:
+                    # Ask LLM for final synthesis
+                    if self.verbose:
+                        print(f"\nThought: I have sufficient data. Preparing final answer...")
+                    
+                    final_prompt = messages + "\n\nBased on all the data retrieved above, provide a clear, coherent final answer to the user's original question. Cite material IDs and units appropriately."
+                    final_answer = self.llm.invoke(final_prompt)
                     
                     if self.verbose:
-                        print(f"[Supervisor] {tool_name} returned {len(str(results[tool_name]))} chars")
+                        print(f"\nFinal Answer:\n{final_answer}")
                     
-                    iteration += 1
-                except Exception as e:
-                    results[tool_name] = f"No data found for {tool_name.replace('_', ' ')}: {str(e)}"
-                    if self.verbose:
-                        print(f"[Supervisor] {tool_name} error: {str(e)}")
+                    return {"output": final_answer}
             
-            # STEP 3: Format results directly (NO LLM INTERPRETATION)
-            if self.verbose:
-                print(f"[Supervisor] Formatting {len(results)} tool results with NO LLM processing...")
-            
-            final_answer = self._format_results(results)
-            
-            return {
-                "output": final_answer,
-                "tool_results": results,
-                "tools_used": tool_names
-            }
+            # Max iterations reached
+            return {"output": "Max iterations reached. Could not find sufficient data."}
     
-    return SupervisorAgent(tools)
-
+    # Map tool names to functions for the agent
+    tools_dict = {
+        "call_thermo_agent": call_thermo_agent,
+        "call_elastic_agent": call_elastic_agent,
+        "call_electronic_agent": call_electronic_agent,
+    }
+    
+    return SupervisorAgent(llm, tools_dict, system_prompt)
 
 
 if __name__ == "__main__":
     print("="*80)
-    print("Testing LatticeReAct Supervisor Agent")
+    print("Testing LatticeReAct Supervisor Agent with Real LLM Reasoning")
     print("="*80)
     
     supervisor = create_supervisor()
     
-    query = "What is the stiffest material with the lowest formation energy in the Si-O system?"
-    print(f"\nQuery: {query}\n")
-    
-    result = supervisor.invoke({"input": query})
-    
+    # Test 1: Single property query
     print("\n" + "="*80)
-    print("Final Result:")
+    print("Test 1: Single Property Query")
     print("="*80)
-    print(result.get("output", result))
+    query1 = "What is the bulk modulus of Iron?"
+    print(f"Query: {query1}\n")
+    result1 = supervisor.invoke({"input": query1})
+    print("\nFinal Answer:")
+    print(result1.get("output", result1))
     
+    # Test 2: Multi-property query
     print("\n" + "="*80)
-    print("Tools Used:")
+    print("Test 2: Multi-Property Query")
     print("="*80)
-    print(", ".join(result.get("tools_used", [])))
+    query2 = "What is the bandgap and formation energy of GaN?"
+    print(f"Query: {query2}\n")
+    result2 = supervisor.invoke({"input": query2})
+    print("\nFinal Answer:")
+    print(result2.get("output", result2))
+    print(result2.get("output", result2))
 

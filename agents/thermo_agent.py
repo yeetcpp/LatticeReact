@@ -1,38 +1,159 @@
-"""Thermodynamic properties agent for LatticeReAct."""
+"""Thermodynamic properties agent for LatticeReAct - LLM-powered with tool usage."""
 import sys
 sys.path.insert(0, '/home/letushack/Documents/TempFileRith/LatticeReAct')
 
+import re
+from langchain_ollama import OllamaLLM
+from langchain_core.tools import tool
 from tools.mp_thermo import search_mp_thermo
 
 
 def create_thermo_agent():
     """
-    Create a thermodynamic properties agent.
+    Create a thermodynamic properties agent powered by Qwen2.5 LLM.
+    
+    The agent:
+    - Uses OllamaLLM for semantic reasoning with temperature=0
+    - Has one tool: query_mp_thermo for Materials Project queries
+    - Implements self-correction by reading error messages and retrying
+    - Returns synthesized answers, not raw JSON
     
     Returns:
-        callable: Agent function that processes thermo queries
+        agent wrapper with invoke method
     """
     
+    # Initialize real LLM
+    llm = OllamaLLM(
+        model="qwen2.5:14b-instruct-q8_0",
+        base_url="http://localhost:11434",
+        temperature=0,
+    )
+    
+    # Tool for Materials Project thermodynamics
+    @tool
+    def query_mp_thermo(query_str: str) -> str:
+        """Query Materials Project for thermodynamic properties."""
+        try:
+            result = search_mp_thermo.invoke({"query": query_str})
+            return result
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    # Wrapper to call the tool (since @tool creates a StructuredTool)
+    def call_thermo_tool(query_str):
+        return query_mp_thermo.invoke(query_str)
+    
+    # System prompt for the agent
+    system_prompt = """You are a thermodynamic properties materials science expert.
+You have access to the Materials Project database via the query_mp_thermo tool.
+
+When asked about thermodynamic properties:
+1. THINK about what data you need
+2. ACTION: Call query_mp_thermo with the query  
+3. OBSERVATION: Read the tool result
+4. FINAL ANSWER: Synthesize into a clear, natural answer
+
+Always cite material IDs (mp-XXXXX) and units (eV/atom for energy).
+If the tool returns an error, analyze it and retry with corrected parameters."""
+
+    # Agent class with tool-using loop
     class ThermoAgent:
-        def __init__(self):
-            self.name = "thermo_agent"
-            self.description = "Thermodynamic properties agent"
+        def __init__(self, llm, sys_prompt, tool_func):
+            self.llm = llm
+            self.sys_prompt = sys_prompt
+            self.tool_func = tool_func
+            self.verbose = True
         
         def invoke(self, inputs):
-            """Execute thermodynamic query."""
-            query = inputs.get("input") or inputs.get("query", "")
-            result = search_mp_thermo.invoke({"query": query})
-            return {"output": result}
-        
-        def __call__(self, query):
-            """Direct call interface."""
-            return self.invoke({"query": query})
+            """Execute the agent with thought-action-observation loop."""
+            query = inputs.get("input", "")
+            max_iterations = 3
+            iteration = 0
+            
+            # Initialize conversation
+            messages = f"{self.sys_prompt}\n\nUser query: {query}"
+            
+            while iteration < max_iterations:
+                iteration += 1
+                
+                if self.verbose:
+                    print(f"\n--- Iteration {iteration} ---")
+                    print(f"Thought: Thinking about how to answer: {query}")
+                
+                # Call LLM to get next action
+                llm_input = messages + f"\n\nRespond with your next action. Use format: ACTION: query_mp_thermo\nQUERY: <your query here>"
+                response = self.llm.invoke(llm_input)
+                
+                if self.verbose:
+                    print(f"\nLLM Response:\n{response[:500]}")
+                
+                # Check if LLM wants to use a tool
+                if "query_mp_thermo" in response.lower() or "action:" in response.lower():
+                    if self.verbose:
+                        print(f"\nAction: Calling query_mp_thermo")
+                    
+                    # Extract query from response
+                    query_pattern = r"(?:query:|ACTION INPUT:|QUERY:)\s*(.+?)(?:\n|$)"
+                    match = re.search(query_pattern, response, re.IGNORECASE | re.MULTILINE)
+                    
+                    if match:
+                        tool_query = match.group(1).strip().strip('"').strip("'")
+                    else:
+                        tool_query = query
+                    
+                    if self.verbose:
+                        print(f"Query: {tool_query}")
+                    
+                    # Call tool
+                    observation = self.tool_func(tool_query)
+                    
+                    if self.verbose:
+                        obs_preview = observation[:300] + "..." if len(observation) > 300 else observation
+                        print(f"\nObservation:\n{obs_preview}")
+                    
+                    # Add to messages for next iteration
+                    messages += f"\n\nAction: query_mp_thermo\nQuery: {tool_query}\nResult: {observation}"
+                    
+                    # Check if we got data or need to retry
+                    if "error" in observation.lower() or "no data" in observation.lower():
+                        if iteration < max_iterations:
+                            if self.verbose:
+                                print(f"\nThought: Got an error, will retry with different parameters...")
+                            continue
+                    else:
+                        # Got data, ask LLM for final answer
+                        if self.verbose:
+                            print(f"\nThought: I have the data I need. Preparing final answer...")
+                        
+                        final_prompt = messages + "\n\nBased on the data above, provide a clear final answer to the user's original question."
+                        final_answer = self.llm.invoke(final_prompt)
+                        
+                        if self.verbose:
+                            print(f"\nFinal Answer:\n{final_answer}")
+                        
+                        return {"output": final_answer}
+                else:
+                    # LLM provided direct answer without tool
+                    if self.verbose:
+                        print(f"\nFinal Answer:\n{response}")
+                    return {"output": response}
+            
+            # Max iterations reached
+            return {"output": "Max iterations reached. Could not find sufficient data."}
     
-    return ThermoAgent()
+    return ThermoAgent(llm, system_prompt, call_thermo_tool)
 
 
 if __name__ == "__main__":
+    print("="*80)
+    print("Testing Thermo Agent with Real LLM")
+    print("="*80)
+    
     agent = create_thermo_agent()
-    result = agent({"input": "What is the formation energy of GaN?"})
-    print(result)
+    result = agent.invoke({"input": "What is the formation energy of GaN?"})
+    
+    print("\n" + "="*80)
+    print("Answer:")
+    print("="*80)
+    print(result.get("output", result))
 

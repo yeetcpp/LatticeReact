@@ -78,7 +78,24 @@ def search_mp_elastic(query: str) -> str:
             if element_match:
                 parsed_params['formula'] = element_match.group(1)
     
-    if not parsed_params:
+    # Convert formula to chemsys format by extracting unique elements and joining with hyphens
+    if 'formula' in parsed_params and 'chemsys' not in parsed_params:
+        formula = parsed_params['formula']
+        # Extract all element symbols (capital letter optionally followed by lowercase)
+        elements = re.findall(r'[A-Z][a-z]?', formula)
+        if elements:
+            # Get unique elements and join with hyphens
+            unique_elements = []
+            for element in elements:
+                if element not in unique_elements:
+                    unique_elements.append(element)
+            if len(unique_elements) > 1:
+                parsed_params['chemsys'] = '-'.join(unique_elements)
+            else:
+                # Single element system
+                parsed_params['chemsys'] = unique_elements[0]
+    
+    if not parsed_params or ('chemsys' not in parsed_params and 'material_ids' not in parsed_params):
         return f"API Error: Could not parse elastic property query from: {query}"
     
     # Build API request - use only valid parameters
@@ -91,11 +108,6 @@ def search_mp_elastic(query: str) -> str:
         params['material_ids'] = parsed_params['material_ids']
     if 'chemsys' in parsed_params:
         params['chemsys'] = parsed_params['chemsys']
-    # Note: elasticity endpoint doesn't accept 'formula' parameter
-    
-    # If no valid search parameters found, try to use formula as chemsys (single element system)
-    if not params and 'formula' in parsed_params:
-        params['chemsys'] = parsed_params['formula']
     
     # Add fields and limit parameters
     params['_fields'] = 'material_id,formula_pretty,bulk_modulus,shear_modulus,young_modulus,universal_anisotropy,energy_above_hull,is_metal'
