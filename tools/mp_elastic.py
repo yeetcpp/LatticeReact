@@ -110,7 +110,7 @@ def search_mp_elastic(query: str) -> str:
         params['chemsys'] = parsed_params['chemsys']
     
     # Add fields and limit parameters
-    params['_fields'] = 'material_id,formula_pretty,bulk_modulus,shear_modulus,young_modulus,universal_anisotropy,energy_above_hull,is_metal'
+    params['_fields'] = 'material_id,formula_pretty,bulk_modulus,shear_modulus,young_modulus,universal_anisotropy,energy_above_hull'
     params['_limit'] = 50  # Increased from 5 to get better coverage
     
     try:
@@ -122,6 +122,43 @@ def search_mp_elastic(query: str) -> str:
         
         if not entries:
             return f"No elastic data found for: {query}"
+        
+        # Get stability information for all materials
+        material_ids = [entry.get('material_id') for entry in entries if entry.get('material_id')]
+        stability_info = {}
+        
+        if material_ids:
+            try:
+                stability_url = "https://api.materialsproject.org/materials/summary/"
+                stability_params = {
+                    'material_ids': ','.join(material_ids),
+                    '_fields': 'material_id,energy_above_hull'
+                }
+                stability_response = requests.get(stability_url, params=stability_params, headers=headers, timeout=10)
+                stability_response.raise_for_status()
+                stability_data = stability_response.json()
+                
+                for entry in stability_data.get('data', []):
+                    mat_id = entry.get('material_id')
+                    if mat_id:
+                        stability_info[mat_id] = entry.get('energy_above_hull')
+            except Exception:
+                pass  # Continue without stability data if fetch fails
+        
+        # Add stability info to entries
+        for entry in entries:
+            mat_id = entry.get('material_id')
+            if mat_id in stability_info:
+                entry['energy_above_hull'] = stability_info[mat_id]
+        
+        # Sort entries by stability - stable phases first (energy_above_hull = 0), then by energy_above_hull ascending
+        def stability_sort_key(entry):
+            energy_above_hull = entry.get('energy_above_hull')
+            if energy_above_hull is None:
+                return (1, float('inf'))  # Put entries without energy data at the end
+            return (0 if energy_above_hull <= 0.001 else 1, energy_above_hull)  # Stable phases first
+        
+        entries.sort(key=stability_sort_key)
         
         # Format the results
         results = []
@@ -141,19 +178,23 @@ def search_mp_elastic(query: str) -> str:
                 young_vrh = young_modulus_obj.get('vrh', 'N/A') if isinstance(young_modulus_obj, dict) else 'N/A'
                 
                 anisotropy = entry.get('universal_anisotropy', 'N/A')
+                energy_above_hull = entry.get('energy_above_hull', 'N/A')
                 
                 # Format values with proper type conversion
                 bulk_str = f"{float(bulk_vrh):.2f} GPa" if bulk_vrh != 'N/A' and bulk_vrh is not None else "N/A"
                 shear_str = f"{float(shear_vrh):.2f} GPa" if shear_vrh != 'N/A' and shear_vrh is not None else "N/A"
                 young_str = f"{float(young_vrh):.2f} GPa" if young_vrh != 'N/A' and young_vrh is not None else "N/A"
                 aniso_str = f"{float(anisotropy):.4f}" if anisotropy != 'N/A' and anisotropy is not None else "N/A"
+                energy_str = f"{float(energy_above_hull):.3f} eV/atom" if energy_above_hull != 'N/A' and energy_above_hull is not None else "N/A"
+                stability_str = " (STABLE)" if energy_above_hull != 'N/A' and energy_above_hull is not None and energy_above_hull <= 0.001 else ""
                 
                 result_str = (
-                    f"[{material_id}] {formula}\n"
+                    f"[{material_id}] {formula}{stability_str}\n"
                     f"  Bulk Modulus (VRH): {bulk_str}\n"
                     f"  Shear Modulus (VRH): {shear_str}\n"
                     f"  Young's Modulus (VRH): {young_str}\n"
-                    f"  Universal Anisotropy: {aniso_str}"
+                    f"  Universal Anisotropy: {aniso_str}\n"
+                    f"  Energy Above Hull: {energy_str}"
                 )
                 results.append(result_str)
             except (KeyError, TypeError, ValueError) as e:
