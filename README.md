@@ -30,13 +30,161 @@ LatticeReAct is an advanced multi-agent AI framework that provides natural langu
 
 ## 🚀 Quick Start
 
+## 💬 Interactive Chat Interface (🆕 Terminal Chatbot!)
+
+### 🎯 One-Command Start
+```bash
+./start-chat.sh
+```
+
+### Full Interactive Experience
+```
+🧪 LatticeReAct Chat 🧪
+Interactive Materials Science Assistant
+
+⚡ Powered by Multi-Agent Framework + Ollama + Materials Project
+🔬 Ready to analyze materials from quantum to bulk properties
+
+🔍 Checking system dependencies...
+✅ Docker: Available
+✅ Ollama: Running (v0.18.2)  
+✅ LatticeReAct Docker Image: Ready
+🚀 Starting LatticeReAct container...
+✅ Container started
+🎉 LatticeReAct Chat is ready!
+
+🔬 You: What is the bandgap of Silicon?
+🧪 Analyzing materials data...
+🤖 LatticeReAct: [Full analysis with MP database search...]
+
+🔬 You: /help
+🛠️ LatticeReAct Chat Commands:
+  • Ask about bandgaps, elastic properties, formation energies
+  • /history - View recent queries
+  • /save - Export chat history  
+  • /exit - Quit gracefully
+
+🔬 You: /exit
+👋 Goodbye! Thanks for using LatticeReAct Chat
+```
+
+### Alternative Quick Queries
+```bash
+# One-shot queries without interactive mode
+python3 quick-query.py "What is the bulk modulus of Iron?"
+python3 quick-query.py "What are the elastic properties of GaN?"
+```
+
+### Chat Features
+- 🎯 **Natural Language Interface** - Ask in plain English
+- 🧪 **Real-time Processing** - Live typing animations  
+- 🎨 **Smart Formatting** - Color-coded responses
+- 💾 **Session Management** - History, saving, status
+- ⚡ **Built-in Commands** - Help, navigation, cleanup
+- 🚪 **Graceful Exit** - Proper Docker container cleanup
+
+---
+
+## 🐳 Docker Deployment (Production Ready)
+
+### One-Click Setup
+```bash
+# 1. Clone and configure
+git clone <your-repo>
+cd LatticeReAct
+cp .env.template .env
+# Edit .env and add your MP_API_KEY
+
+# 2. Ensure Ollama is running with the model
+ollama serve  # (in background)
+ollama pull qwen2.5:14b-instruct-q8_0
+
+# 3. Run automated setup
+./scripts/setup.sh
+
+# 4. Test the system
+./scripts/test.sh
+
+# 5. Run queries
+docker run --rm --env-file .env --network=host latticereact-app python run_supervisor.py --quiet "What is the bulk modulus of Iron?"
+```
+
+### Quick Commands
+```bash
+# 🏆 RECOMMENDED: Interactive Chat
+./start-chat.sh
+
+# ⚡ Quick one-shot queries  
+python3 quick-query.py "What is the bandgap of GaN?"
+
+# 🎬 Run full demo
+./demo.sh
+
+# 🐳 Advanced Docker usage
+docker run --rm --env-file .env --network=host latticereact-app python run_supervisor.py --quiet "Your question"
+
+# 🔧 Interactive Docker shell
+docker run -it --env-file .env --network=host latticereact-app /bin/bash
+
+# 📱 Background service mode
+docker run -d --name latticereact --env-file .env --network=host latticereact-app tail -f /dev/null
+docker exec latticereact python run_supervisor.py --quiet "Your question"
+docker rm -f latticereact  # cleanup
+```
+
+## 🎯 Example Interactions
+
+### Chat Interface Demo
+```bash
+🔬 You: What is the bandgap of Silicon?
+🧪 Analyzing materials data...
+🤖 LatticeReAct:
+================================================================================
+FINAL ANSWER  
+================================================================================
+ID_NOT_FOUND for Silicon — No sufficient data provided for bandgap.
+================================================================================
+Completed in 22.64s
+
+🔬 You: /help
+🛠️  LatticeReAct Chat Commands:
+
+Materials Queries:
+  • "What is the bandgap of Silicon?"
+  • "What are the elastic properties of Iron?"
+  • "Tell me about the thermal properties of Copper"
+  
+Special Commands:
+  • /help - Show help
+  • /history - Show recent queries
+  • /save - Save chat history
+  • /exit - Exit chat
+
+🔬 You: /exit
+👋 Goodbye! Thanks for using LatticeReAct Chat
+```
+
+### Quick Query Demo
+```bash
+$ python3 quick-query.py "What is the bulk modulus of Iron?"
+🔬 Querying: What is the bulk modulus of Iron?
+🧪 Processing...
+🤖 LatticeReAct Response:
+Final Answer: ID_NOT_FOUND for Fe — No bulk modulus data available
+⏱️  Completed in 21.0s
+```
+
+---
+
+## 🔧 Manual Installation
+
 ### Prerequisites
 
 - Python 3.8+
 - Materials Project API Key ([Get one here](https://materialsproject.org/api))
 - Ollama with Qwen2.5:14b model
 
-### Installation
+### Manual Installation
 
 1. **Clone the repository**
    ```bash

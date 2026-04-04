@@ -47,4 +47,6 @@ Thumbs.db
 
 # Environment variables
 .env
+.env.*
+!.env.template
 .env.local

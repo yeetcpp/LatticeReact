@@ -1,0 +1,87 @@
+# Remove obsolete version field for modern docker-compose
+services:
+  # Ollama service for LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: latticereact-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts:/scripts:ro
+    environment:
+      - OLLAMA_ORIGINS=*
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Main LatticeReAct application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: latticereact-app
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MP_API_KEY=${MP_API_KEY:-}
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from agents.supervisor import create_supervisor; print('OK')"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    networks:
+      - latticereact-network
+
+  # Future frontend service (ready for when you add it)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: latticereact-frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_TITLE=LatticeReAct
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    profiles:
+      - frontend  # Only start with --profile frontend
+    networks:
+      - latticereact-network
+
+volumes:
+  ollama_data:
+    driver: local
+    labels:
+      project: "latticereact"
+      service: "ollama"
+
+networks:
+  latticereact-network:
+    driver: bridge
+    labels:
+      project: "latticereact"

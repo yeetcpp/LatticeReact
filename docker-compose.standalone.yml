@@ -1,0 +1,37 @@
+# Standalone docker-compose for app-only (when Ollama is already running)
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: latticereact-app-standalone
+    restart: unless-stopped
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - MP_API_KEY=${MP_API_KEY:-}
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from agents.supervisor import create_supervisor; print('OK')"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    networks:
+      - latticereact-network
+
+networks:
+  latticereact-network:
+    driver: bridge
+    labels:
+      project: "latticereact"
