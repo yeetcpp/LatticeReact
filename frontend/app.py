@@ -60,8 +60,94 @@ def clean_answer(text: str) -> str:
     return result
 
 # Page configuration
-st.set_page_config(page_title="LatticeReAct", layout="wide")
+st.set_page_config(page_title="LatticeReAct", layout="wide", page_icon="⚛️")
 logger.info("set_page_config completed")
+
+# Custom CSS for modern design aesthetics
+st.markdown("""
+<style>
+    /* Global font imports */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Hide Streamlit default elements for a cleaner look */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Hero Section */
+    .hero-title {
+        font-size: 4rem;
+        font-weight: 800;
+        background: -webkit-linear-gradient(45deg, #FF6B6B, #4ECDC4, #45B7D1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        margin-bottom: 0.5rem;
+        padding-top: 1rem;
+    }
+    .hero-subtitle {
+        text-align: center;
+        font-size: 1.5rem;
+        color: #6c757d;
+        font-weight: 400;
+        margin-bottom: 2.5rem;
+    }
+
+    /* Expander Styling */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        border-radius: 8px;
+    }
+
+    /* Buttons Styling */
+    div.stButton > button:first-child {
+        background-color: #ffffff;
+        color: #333333;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        width: 100%;
+    }
+    div.stButton > button:first-child:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+        border-color: #4ECDC4;
+        color: #4ECDC4;
+    }
+    
+    /* Input Field Styling */
+    div[data-baseweb="input"] {
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02) inset;
+        transition: all 0.3s ease;
+    }
+    div[data-baseweb="input"]:focus-within {
+        border-color: #45B7D1;
+        box-shadow: 0 0 0 2px rgba(69, 183, 209, 0.2);
+    }
+    
+    /* Primary Submit Button style */
+    button[kind="primary"] {
+        background: linear-gradient(135deg, #4ECDC4, #45B7D1) !important;
+        color: white !important;
+        border: none !important;
+    }
+    button[kind="primary"]:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4) !important;
+        color: white !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # Initialize session state for query
 if "query" not in st.session_state:
@@ -73,8 +159,8 @@ def set_query(text):
     st.session_state.query = text
 
 # Title and subtitle
-st.title("LatticeReAct")
-st.markdown("### hallucination-free materials intelligence")
+st.markdown('<h1 class="hero-title">LatticeReAct</h1>', unsafe_allow_html=True)
+st.markdown('<p class="hero-subtitle">hallucination-free materials intelligence</p>', unsafe_allow_html=True)
 logger.info("header rendered")
 
 # How it works expander
